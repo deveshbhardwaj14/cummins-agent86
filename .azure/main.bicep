@@ -101,6 +101,9 @@ param existingVoiceLiveResourceGroup string = ''
 @description('Optional override for the Voice Live private endpoint name. Used to coexist with a legacy hand-created PE that already occupies the default name (projectName + "-voicelive-pe") — Azure refuses CannotChangePrivateLinkConnectionOnPrivateEndpoint on an in-place retarget, so the new PE picks a distinct name and the legacy one is left alone as a rollback fallback. Leave empty to use the default name that matches the other PEs in this template.')
 param voiceLivePeName string = ''
 
+@description('Azure region for the Voice Live (gpt-realtime) Cognitive Services account. Defaults to the main deployment location. Set to a different region (e.g. "eastus2") when the gpt-realtime model is unavailable or at capacity in the primary region. Only used when voiceLiveMode=create.')
+param voiceLiveLocation string = ''
+
 // ---------- reuse existing platform resources (pipeline use case) ----------
 @description('Existing ACR name. When set, skip provisioning ACR and grant AcrPull on this registry instead. Pair with existingAcrResourceGroup when it lives in a different RG.')
 param existingAcrName string = ''
@@ -178,7 +181,35 @@ param deployerObjectId string = ''
 param deployerPrincipalType string = 'User'
 
 // ---------- networking (optional private-egress mode) ----------
-@description('Network configuration. Set { enabled: true } to provision a VNet and route Container App egress through private endpoints. Public ingress on the Container App is preserved. Object shape: { enabled: bool, addressSpace: string, subnets: { aca: string, privateEndpoints: string }, deployerIpAddress: string }.')
+@description('''Network configuration. Controls VNet provisioning and private-endpoint wiring.
+
+Create mode (default):
+  {
+    enabled: true,
+    addressSpace: "10.20.0.0/16",          // VNet CIDR
+    subnets: {
+      aca: "10.20.0.0/27",                // ACA env subnet (min /27, delegated to Microsoft.App/environments)
+      privateEndpoints: "10.20.1.0/24"   // PE NIC subnet
+    },
+    deployerIpAddress: "<your-ip>"
+  }
+
+BYON mode (Bring Your Own Network — pair with a pre-existing VNet):
+  {
+    enabled: true,
+    existingVnetName: "my-hub-vnet",
+    existingVnetResourceGroup: "networking-rg",  // optional, defaults to current RG
+    existingAcaSubnetName: "aca-subnet",         // optional, defaults to "aca-subnet"
+    existingPeSubnetName: "pe-subnet",           // optional, defaults to "pe-subnet"
+    deployerIpAddress: "<your-ip>"
+  }
+  When existingVnetName is set, VNet and subnet creation is skipped.
+  The named subnets must already exist and be correctly configured
+  (ACA subnet delegated to Microsoft.App/environments; PE subnet with
+  privateEndpointNetworkPolicies disabled).
+  Private DNS zones are still provisioned in the current RG and linked
+  to the existing VNet so that private-endpoint A records resolve.
+''')
 param networkConfig object = {
   enabled: false
 }
@@ -188,6 +219,9 @@ param acrLockdown bool = false
 
 @description('Pass-2-only flag. When true (and networkConfig.enabled + features.rag), flips AI Search to publicNetworkAccess: Disabled. The Search PE is already wired in pass 1, and indexer setup has already run via the deployer-IP firewall window. Has no effect when networkConfig.enabled or features.rag is false.')
 param searchLockdown bool = false
+
+@description('Pass-2-only flag. When true (and networkConfig.enabled + features.rag), flips the RAG storage account to publicNetworkAccess: Disabled. The blob PE is already wired in pass 1 and the AI Search indexer reaches storage via the Search-managed shared private link. IP rules are cleared automatically — they are incompatible with publicNetworkAccess: Disabled. Has no effect when networkConfig.enabled or features.rag is false.')
+param ragStorageLockdown bool = false
 
 @description('Whether to deploy the Container App. False on the first pass (before the image exists in ACR), true on the second pass.')
 param deployApp bool = true
@@ -244,9 +278,17 @@ var networkAcaSubnet = string(networkConfig.?subnets.?aca ?? '10.20.0.0/27')
 var networkPeSubnet = string(networkConfig.?subnets.?privateEndpoints ?? '10.20.1.0/24')
 var networkDeployerIp = string(networkConfig.?deployerIpAddress ?? '')
 
+// BYON (Bring Your Own Network) — set existingVnetName to skip VNet creation.
+var networkExistingVnetName = string(networkConfig.?existingVnetName ?? '')
+var networkExistingVnetResourceGroup = string(networkConfig.?existingVnetResourceGroup ?? '')
+var networkExistingAcaSubnetName = string(networkConfig.?existingAcaSubnetName ?? 'aca-subnet')
+var networkExistingPeSubnetName = string(networkConfig.?existingPeSubnetName ?? 'pe-subnet')
+
 // ---------- modules ----------
 
 // Optional VNet + subnets + private DNS zones for private-egress mode.
+// In BYON mode (networkExistingVnetName set) the VNet and subnets are
+// not created — existing ones are used instead.
 module network 'modules/network.bicep' = if (networkEnabled) {
   name: 'network'
   params: {
@@ -255,6 +297,10 @@ module network 'modules/network.bicep' = if (networkEnabled) {
     addressSpace: networkAddressSpace
     acaSubnetCidr: networkAcaSubnet
     peSubnetCidr: networkPeSubnet
+    existingVnetName: networkExistingVnetName
+    existingVnetResourceGroup: networkExistingVnetResourceGroup
+    existingAcaSubnetName: networkExistingAcaSubnetName
+    existingPeSubnetName: networkExistingPeSubnetName
   }
 }
 
@@ -366,11 +412,16 @@ resource existingEnv 'Microsoft.App/managedEnvironments@2024-03-01' existing = i
 var resolvedEnvId = provisionEnv ? env!.outputs.id : existingEnv!.id
 
 // Voice Live: only created in 'create' mode.
+// voiceLiveLocation allows deploying the gpt-realtime account in a
+// different region from the rest of the stack (e.g. eastus2) when the
+// model is unavailable or at capacity in the primary region.
+var resolvedVoiceLiveLocation = empty(voiceLiveLocation) ? location : voiceLiveLocation
+
 module voiceLive 'modules/voice-live.bicep' = if (voiceLiveMode == 'create') {
   name: 'voiceLive'
   params: {
     accountName: voiceLiveAccountName
-    location: location
+    location: resolvedVoiceLiveLocation
     model: voiceLiveModel
     modelVersion: voiceLiveModelVersion
     networkEnabled: networkEnabled
@@ -415,6 +466,7 @@ module ragStorage 'modules/rag-storage.bicep' = if (features.rag) {
     networkEnabled: networkEnabled
     deployerIpAddress: networkDeployerIp
     additionalAllowedIpRules: ragStorageAllowedIpRules
+    lockdown: ragStorageLockdown
   }
 }
 

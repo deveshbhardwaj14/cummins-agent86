@@ -323,6 +323,38 @@ function ensureResourceGroup(rg, location) {
     ok('created');
 }
 
+// ---------- Log Analytics quota guard ----------
+// Only one Log Analytics workspace is allowed per resource group.
+// If a workspace already exists in the target RG with a name that does
+// NOT match the one this deployment manages (i.e. a foreign workspace),
+// fail fast rather than letting Bicep succeed and leave the RG in an
+// ambiguous state.
+//
+// Re-deploying the SAME workspace (same name, idempotent update) is
+// always allowed — this guard only blocks a *second, different* workspace.
+function checkLogAnalyticsQuota(rg, expectedWorkspaceName) {
+    step('Checking Log Analytics workspace quota');
+    const workspaces = azJson([
+        'resource', 'list',
+        '--resource-group', rg,
+        '--resource-type', 'Microsoft.OperationalInsights/workspaces',
+    ]) || [];
+    const conflicting = workspaces.filter(
+        w => (w.name || '').toLowerCase() !== expectedWorkspaceName.toLowerCase()
+    );
+    if (conflicting.length > 0) {
+        const names = conflicting.map(w => `  - ${w.name}`).join('\n');
+        die(
+            `Resource group '${rg}' already contains a Log Analytics workspace\n` +
+            `that is not managed by this deployment:\n${names}\n\n` +
+            `Only one Log Analytics workspace is allowed per resource group.\n` +
+            `Remove the conflicting workspace(s) before deploying, or choose\n` +
+            `a different resource group (azure.resourceGroup in settings.json).`
+        );
+    }
+    ok(`no conflicting Log Analytics workspaces found`);
+}
+
 // Resolve the principal running this deploy so bicep can grant it the
 // Storage Blob Data Contributor role on the RAG storage account. We
 // can't use shared-key access (tenant policy + bicep disables it) so
@@ -421,10 +453,24 @@ function tryReadDeploymentError(name, rg) {
     if (!failed) return null;
     const sm = failed.properties.statusMessage;
     if (!sm || !sm.error) return null;
-    const e = sm.error;
-    const parts = [e.code, e.message].filter(Boolean);
-    if (Array.isArray(e.details)) for (const d of e.details) parts.push(`  - ${d.code || ''}: ${d.message || ''}`);
-    return parts.join('\n  ');
+    // Recursively flatten nested error.details arrays so that inner
+    // preflight errors (e.g. from CognitiveServices) are visible instead
+    // of just the top-level "preflight validation errors" wrapper.
+    function flattenError(e, prefix) {
+        const parts = [];
+        const msg = [e.code, e.message].filter(Boolean).join(': ');
+        if (msg) parts.push(`${prefix}${msg}`);
+        if (Array.isArray(e.details)) {
+            for (const d of e.details) parts.push(...flattenError(d, prefix + '  '));
+        }
+        if (Array.isArray(e.additionalInfo)) {
+            for (const ai of e.additionalInfo) {
+                if (ai && ai.info) parts.push(`${prefix}  Info: ${JSON.stringify(ai.info)}`);
+            }
+        }
+        return parts;
+    }
+    return flattenError(sm.error, '').join('\n  ');
 }
 
 function tryExtractPreflightError(createArgs) {
@@ -1266,6 +1312,9 @@ async function main() {
     }
 
     ensureResourceGroup(s.azure.resourceGroup, s.azure.location);
+    if (!FLAG_SKIP_INFRA && !FLAG_SEARCH_ONLY) {
+        checkLogAnalyticsQuota(s.azure.resourceGroup, names.logAnalyticsName);
+    }
 
     // Identify the principal running this deploy. We grant it Storage
     // Blob Data Contributor on the RAG storage account so the user can
@@ -1323,8 +1372,15 @@ async function main() {
         // configureSearchIndexer can PUT from the deployer's laptop).
         // Pass 2 flips both to publicNetworkAccess: Disabled with their
         // PEs / SPLs handling the actual traffic.
+        const isByon = !!(s.network && s.network.vnetMode === 'existing' && s.network.existingVnetName);
         const networkConfig = {
             enabled: !!(s.network && s.network.enabled),
+            // BYON fields (only populated when vnetMode === 'existing').
+            existingVnetName:          isByon ? (s.network.existingVnetName || '') : '',
+            existingVnetResourceGroup: isByon ? (s.network.existingVnetResourceGroup || '') : '',
+            existingAcaSubnetName:     isByon ? (s.network.existingAcaSubnetName || 'aca-subnet') : 'aca-subnet',
+            existingPeSubnetName:      isByon ? (s.network.existingPeSubnetName  || 'pe-subnet')  : 'pe-subnet',
+            // Create-mode fields (ignored by Bicep when existingVnetName is set).
             addressSpace: (s.network && s.network.addressSpace) || '10.20.0.0/16',
             subnets: {
                 aca: (s.network && s.network.subnets && s.network.subnets.aca) || '10.20.0.0/27',
@@ -1353,6 +1409,7 @@ async function main() {
             // override the bicep default back to '' and re-trigger the
             // Sweden Central DeploymentModelNotSupported error.
             `voiceLiveModelVersion=${(s.voiceLive && s.voiceLive.modelVersion) || '2025-08-28'}`,
+            `voiceLiveLocation=${(s.voiceLive && s.voiceLive.location) || ''}`,
             `voiceLiveApiKey=${apiKey}`,
             `voiceLiveAuthMode=${authMode}`,
             `existingVoiceLiveAccountName=${s.voiceLive.mode === 'existing' ? (s.voiceLive.accountName || '') : ''}`,

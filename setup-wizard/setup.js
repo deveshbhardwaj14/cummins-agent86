@@ -192,11 +192,20 @@ function defaultSettings() {
             // App is preserved (the env's *.azurecontainerapps.io
             // FQDN keeps working).
             enabled: false,
+            // VNet mode: 'create' provisions a new VNet; 'existing'
+            // (BYON) pairs with a pre-existing hub/spoke VNet.
+            vnetMode: 'create',
+            // --- create mode ---
             addressSpace: '10.20.0.0/16',
             subnets: {
                 aca: '10.20.0.0/27',                   // workload-profiles env infra. Min /27.
                 privateEndpoints: '10.20.1.0/24',
             },
+            // --- BYON (existing VNet) mode ---
+            existingVnetName: '',
+            existingVnetResourceGroup: '',
+            existingAcaSubnetName: 'aca-subnet',
+            existingPeSubnetName: 'pe-subnet',
             // Set automatically by the wizard via a public-IP probe
             // (or prompted). Used for the AI Search firewall rule
             // (so the wizard can configure the indexer from outside
@@ -1140,16 +1149,63 @@ async function configureNetworking(s) {
 
     s.network.enabled = true;
 
-    // VNet address space — sensible default, advanced users can edit.
-    s.network.addressSpace = await promptInput(
-        'VNet address space (CIDR)',
-        s.network.addressSpace || '10.20.0.0/16');
+    // ---------- VNet mode: create new or use existing (BYON) ----------
+    const vnetModeChoice = await promptSelect(
+        'VNet mode',
+        s.network.vnetMode || 'create',
+        [
+            { value: 'create',   name: 'Create a new VNet  (wizard provisions address space + subnets)' },
+            { value: 'existing', name: 'Use an existing VNet  (BYON — pair with your hub/spoke network)' },
+        ]
+    );
+    s.network.vnetMode = vnetModeChoice;
 
-    // ACA subnet minimum is /27 (workload profiles). PE subnet larger
-    // for headroom — we hang ~6 PEs off it today, plenty of room.
-    s.network.subnets = s.network.subnets || {};
-    s.network.subnets.aca = s.network.subnets.aca || '10.20.0.0/27';
-    s.network.subnets.privateEndpoints = s.network.subnets.privateEndpoints || '10.20.1.0/24';
+    if (vnetModeChoice === 'existing') {
+        // BYON: prompt for the existing VNet details.
+        s.network.existingVnetName = await promptInput(
+            'Existing VNet name',
+            s.network.existingVnetName || '');
+        if (!s.network.existingVnetName.trim()) die('existingVnetName cannot be empty for BYON mode.');
+
+        s.network.existingVnetResourceGroup = await promptInput(
+            'Resource group of the existing VNet (leave blank = same as deployment RG)',
+            s.network.existingVnetResourceGroup || '');
+
+        s.network.existingAcaSubnetName = await promptInput(
+            'ACA subnet name (delegated to Microsoft.App/environments)',
+            s.network.existingAcaSubnetName || 'aca-subnet');
+
+        s.network.existingPeSubnetName = await promptInput(
+            'Private-endpoint subnet name (privateEndpointNetworkPolicies must be Disabled)',
+            s.network.existingPeSubnetName || 'pe-subnet');
+
+        // Clear create-mode fields so they don’t cause confusion.
+        s.network.addressSpace = '';
+        s.network.subnets = { aca: '', privateEndpoints: '' };
+
+    } else {
+        // Create mode: prompt for CIDR ranges.
+        // Clear any leftover BYON fields.
+        s.network.existingVnetName = '';
+        s.network.existingVnetResourceGroup = '';
+        s.network.existingAcaSubnetName = 'aca-subnet';
+        s.network.existingPeSubnetName = 'pe-subnet';
+
+        // VNet address space — sensible default, advanced users can edit.
+        s.network.addressSpace = await promptInput(
+            'VNet address space (CIDR)',
+            s.network.addressSpace || '10.20.0.0/16');
+
+        // ACA subnet minimum is /27 (workload profiles). PE subnet larger
+        // for headroom — we hang ~6 PEs off it today, plenty of room.
+        s.network.subnets = s.network.subnets || {};
+        s.network.subnets.aca = await promptInput(
+            'ACA environment subnet CIDR (min /27)',
+            s.network.subnets.aca || '10.20.0.0/27');
+        s.network.subnets.privateEndpoints = await promptInput(
+            'Private endpoints subnet CIDR',
+            s.network.subnets.privateEndpoints || '10.20.1.0/24');
+    }
 
     // Detect deployer public IP — needed for the AI Search firewall
     // rule (so deploy.js can configure the indexer from outside the

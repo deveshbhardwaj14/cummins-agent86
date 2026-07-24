@@ -38,6 +38,9 @@ param deployerIpAddress string = ''
 @description('Additional IPv4 addresses (or CIDR ranges) allowed to reach this storage account in network mode. Use this to allow-list team-member workstation IPs so the team can upload documents via Storage Explorer / Portal / AzCopy without each user needing to be the deployer. Survives redeploys (out-of-band `az storage account network-rule add` would be wiped each time bicep runs).')
 param additionalAllowedIpRules array = []
 
+@description('Pass-2-only lockdown flag. When true (and networkEnabled), flips publicNetworkAccess to Disabled so all traffic flows exclusively through the private endpoint. The blob PE must already be provisioned (pass 1) and the AI Search indexer must reach storage via its Search-managed shared private link. IP rules are cleared automatically — they are incompatible with publicNetworkAccess: Disabled.')
+param lockdown bool = false
+
 var deployerIpRules = empty(deployerIpAddress) ? [] : [
   { value: deployerIpAddress, action: 'Allow' }
 ]
@@ -57,8 +60,21 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
     supportsHttpsTrafficOnly: true
     // Tenant policy disallows shared-key access. Indexer reads via MSI.
     allowSharedKeyAccess: false
-    publicNetworkAccess: 'Enabled'
-    networkAcls: networkEnabled ? {
+    // lockdown (pass 2): PNA Disabled — all traffic flows through the
+    // blob private endpoint. IP rules must be cleared (Azure rejects
+    // combining PNA Disabled with ipRules). The AI Search indexer
+    // reaches storage via the Search-managed shared private link.
+    //
+    // networkEnabled only (pass 1): PNA stays Enabled but defaultAction
+    // is Deny. Deployer IP + AzureServices bypass are the only paths in.
+    // This open window lets the indexer be configured and lets the
+    // deployer seed documents before the PE is fully locked.
+    publicNetworkAccess: lockdown ? 'Disabled' : 'Enabled'
+    networkAcls: lockdown ? {
+      defaultAction: 'Deny'
+      bypass: 'AzureServices, Logging, Metrics'
+      ipRules: []
+    } : networkEnabled ? {
       defaultAction: 'Deny'
       // 'AzureServices' allows the AI Search indexer (a trusted
       // Microsoft service) to reach blobs when the Search MSI has
