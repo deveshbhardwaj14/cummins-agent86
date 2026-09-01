@@ -51,9 +51,16 @@ param existingAcaSubnetName string = 'aca-subnet'
 @description('Name of the existing private-endpoint subnet (must have privateEndpointNetworkPolicies disabled) inside the existing VNet.')
 param existingPeSubnetName string = 'pe-subnet'
 
+@description('When true, reuse an existing shared private DNS set in the target resource group instead of creating new private DNS zones here.')
+param useExistingDnsZones bool = false
+
+@description('Resource group containing the existing private DNS zones. Defaults to the current resource group when useExistingDnsZones is true and this is empty.')
+param existingDnsResourceGroup string = ''
+
 // ---------- resolved networking values ----------
 var byonMode = !empty(existingVnetName)
 var resolvedExistingVnetRg = empty(existingVnetResourceGroup) ? resourceGroup().name : existingVnetResourceGroup
+var resolvedDnsResourceGroup = empty(existingDnsResourceGroup) ? resourceGroup().name : existingDnsResourceGroup
 
 // String-only vars for ID construction. Using strings/params in ternary
 // vars is safe — the Bicep InlineDependencyVisitor crash only triggers
@@ -111,28 +118,25 @@ resource peSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-01-01' = if (!
 // openai / services.ai zones depending on the SDK call path — link
 // all three to be safe.
 var zoneNames = [
-  'privatelink.azurecr.io'                  // 0 — ACR
-  'privatelink.search.windows.net'          // 1 — AI Search
-  'privatelink.blob.core.windows.net'       // 2 — Storage blob
-  'privatelink.cognitiveservices.azure.com' // 3 — AIServices (legacy zone)
-  'privatelink.openai.azure.com'            // 4 — AIServices (OpenAI compat zone)
-  'privatelink.services.ai.azure.com'       // 5 — AIServices (Foundry / forward compat)
-  'privatelink.documents.azure.com'         // 6 — Cosmos SQL
+  'privatelink.azurecr.io'                               // 0 — ACR
+  'privatelink.search.windows.net'                       // 1 — AI Search
+  'privatelink.blob.${environment().suffixes.storage}'  // 2 — Storage blob
+  'privatelink.cognitiveservices.azure.com'              // 3 — AIServices (legacy zone)
+  'privatelink.openai.azure.com'                         // 4 — AIServices (OpenAI compat zone)
+  'privatelink.services.ai.azure.com'                    // 5 — AIServices (Foundry / forward compat)
+  'privatelink.documents.azure.com'                      // 6 — Cosmos SQL
 ]
 
-resource dnsZones 'Microsoft.Network/privateDnsZones@2024-06-01' = [for z in zoneNames: {
+resource dnsZones 'Microsoft.Network/privateDnsZones@2024-06-01' = [for z in zoneNames: if (!useExistingDnsZones) {
   name: z
   location: 'global'
 }]
 
 // In BYON mode the link name uses the existing VNet name; in create
-// mode it uses the new VNet name. Single unconditional loop so that
-// `parent: dnsZones[i]` (an array-index expression) is allowed —
-// Bicep BCP240 forbids array-indexed parents on conditional resources.
-// The VNet ID is constructed via resourceId() from string vars (safe;
-// no ResourceSymbol property access that would trigger the
-// InlineDependencyVisitor compiler crash).
-resource zoneLinks 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = [for (z, i) in zoneNames: {
+// mode it uses the new VNet name. When useExistingDnsZones is true,
+// we intentionally do not create any DNS zones or links here and instead
+// expect the target shared DNS set to already be connected to the VNet.
+resource zoneLinks 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-06-01' = [for (z, i) in zoneNames: if (!useExistingDnsZones) {
   name: 'link-${resolvedVnetName}'
   parent: dnsZones[i]
   location: 'global'
@@ -154,17 +158,21 @@ output peSubnetId string = resourceId(
   resolvedVnetRg, 'Microsoft.Network/virtualNetworks/subnets', resolvedVnetName, resolvedPeSubnetName
 )
 
-output acrZoneId string = dnsZones[0].id
-output searchZoneId string = dnsZones[1].id
-output blobZoneId string = dnsZones[2].id
-output cogServicesZoneId string = dnsZones[3].id
-output openAiZoneId string = dnsZones[4].id
-output aiServicesZoneId string = dnsZones[5].id
-output cosmosZoneId string = dnsZones[6].id
+output acrZoneId string = useExistingDnsZones ? resourceId(resolvedDnsResourceGroup, 'Microsoft.Network/privateDnsZones', 'privatelink.azurecr.io') : dnsZones[0].id
+output searchZoneId string = useExistingDnsZones ? resourceId(resolvedDnsResourceGroup, 'Microsoft.Network/privateDnsZones', 'privatelink.search.windows.net') : dnsZones[1].id
+output blobZoneId string = useExistingDnsZones ? resourceId(resolvedDnsResourceGroup, 'Microsoft.Network/privateDnsZones', 'privatelink.blob.${environment().suffixes.storage}') : dnsZones[2].id
+output cogServicesZoneId string = useExistingDnsZones ? resourceId(resolvedDnsResourceGroup, 'Microsoft.Network/privateDnsZones', 'privatelink.cognitiveservices.azure.com') : dnsZones[3].id
+output openAiZoneId string = useExistingDnsZones ? resourceId(resolvedDnsResourceGroup, 'Microsoft.Network/privateDnsZones', 'privatelink.openai.azure.com') : dnsZones[4].id
+output aiServicesZoneId string = useExistingDnsZones ? resourceId(resolvedDnsResourceGroup, 'Microsoft.Network/privateDnsZones', 'privatelink.services.ai.azure.com') : dnsZones[5].id
+output cosmosZoneId string = useExistingDnsZones ? resourceId(resolvedDnsResourceGroup, 'Microsoft.Network/privateDnsZones', 'privatelink.documents.azure.com') : dnsZones[6].id
 
 // Convenience bundles for the AIServices PE (Voice Live, embeddings)
 // which we want to register under all three Foundry-family zones.
-output aiServicesZoneIds array = [
+output aiServicesZoneIds array = useExistingDnsZones ? [
+  resourceId(resolvedDnsResourceGroup, 'Microsoft.Network/privateDnsZones', 'privatelink.cognitiveservices.azure.com')
+  resourceId(resolvedDnsResourceGroup, 'Microsoft.Network/privateDnsZones', 'privatelink.openai.azure.com')
+  resourceId(resolvedDnsResourceGroup, 'Microsoft.Network/privateDnsZones', 'privatelink.services.ai.azure.com')
+] : [
   dnsZones[3].id
   dnsZones[4].id
   dnsZones[5].id

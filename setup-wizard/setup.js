@@ -195,6 +195,10 @@ function defaultSettings() {
             // VNet mode: 'create' provisions a new VNet; 'existing'
             // (BYON) pairs with a pre-existing hub/spoke VNet.
             vnetMode: 'create',
+            // When true, point private endpoints at an existing shared DNS
+            // resource group instead of creating new private DNS zones here.
+            useExistingDnsZones: false,
+            existingDnsResourceGroup: '',
             // --- create mode ---
             addressSpace: '10.20.0.0/16',
             subnets: {
@@ -1205,6 +1209,18 @@ async function configureNetworking(s) {
         s.network.subnets.privateEndpoints = await promptInput(
             'Private endpoints subnet CIDR',
             s.network.subnets.privateEndpoints || '10.20.1.0/24');
+    }
+
+    const reuseDns = await promptConfirm(
+        'Reuse an existing shared private DNS zone set instead of creating new private DNS zones?',
+        !!(s.network && s.network.useExistingDnsZones));
+    s.network.useExistingDnsZones = reuseDns;
+    if (reuseDns) {
+        s.network.existingDnsResourceGroup = await promptInput(
+            'Resource group containing the existing private DNS zones (leave blank = current RG)',
+            s.network.existingDnsResourceGroup || '');
+    } else {
+        s.network.existingDnsResourceGroup = '';
     }
 
     // Detect deployer public IP — needed for the AI Search firewall

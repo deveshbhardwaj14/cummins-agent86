@@ -277,6 +277,8 @@ var networkAddressSpace = string(networkConfig.?addressSpace ?? '10.20.0.0/16')
 var networkAcaSubnet = string(networkConfig.?subnets.?aca ?? '10.20.0.0/27')
 var networkPeSubnet = string(networkConfig.?subnets.?privateEndpoints ?? '10.20.1.0/24')
 var networkDeployerIp = string(networkConfig.?deployerIpAddress ?? '')
+var networkUseExistingDnsZones = bool(networkConfig.?useExistingDnsZones ?? false)
+var networkExistingDnsResourceGroup = string(networkConfig.?existingDnsResourceGroup ?? '')
 
 // BYON (Bring Your Own Network) — set existingVnetName to skip VNet creation.
 var networkExistingVnetName = string(networkConfig.?existingVnetName ?? '')
@@ -301,6 +303,8 @@ module network 'modules/network.bicep' = if (networkEnabled) {
     existingVnetResourceGroup: networkExistingVnetResourceGroup
     existingAcaSubnetName: networkExistingAcaSubnetName
     existingPeSubnetName: networkExistingPeSubnetName
+    useExistingDnsZones: networkUseExistingDnsZones
+    existingDnsResourceGroup: networkExistingDnsResourceGroup
   }
 }
 

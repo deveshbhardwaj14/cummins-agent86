@@ -1375,6 +1375,8 @@ async function main() {
         const isByon = !!(s.network && s.network.vnetMode === 'existing' && s.network.existingVnetName);
         const networkConfig = {
             enabled: !!(s.network && s.network.enabled),
+            useExistingDnsZones: !!(s.network && s.network.useExistingDnsZones),
+            existingDnsResourceGroup: (s.network && s.network.existingDnsResourceGroup) || '',
             // BYON fields (only populated when vnetMode === 'existing').
             existingVnetName:          isByon ? (s.network.existingVnetName || '') : '',
             existingVnetResourceGroup: isByon ? (s.network.existingVnetResourceGroup || '') : '',
