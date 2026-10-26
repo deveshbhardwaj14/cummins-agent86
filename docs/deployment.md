@@ -101,6 +101,20 @@ frontend. This catches the kind of crash that otherwise only shows up
 
 ## Troubleshooting
 
+**Personal voice plays the welcome message but live replies are silent**
+
+The welcome, filler, and nudge clips are generated separately using the standard
+Azure TTS voice. Hearing those clips does not verify live personal-voice synthesis.
+Confirm that the configured personal voice is available on the same Azure
+resource used by Voice Live and that the resource has Personal Voice access.
+
+Personal voice needs two values in `settings.json` under `customVoice`:
+`profileId` and `name`. Both must be the personal voice's Speaker Profile ID GUID,
+the value the Voice Live service echoes back as `voice.name` in `session.updated`.
+The session sends `name` as `voice.name` with `type: "azure-personal"`. The
+Speech Studio display name (for example `dev-voice`) is not the value to use.
+If `name` is empty, the app falls back to the standard voice.
+
 **`AZURE_VOICELIVE_API_KEY env var is not set`**
 Set it (see "Setting the API key" above). The script never reads or writes it from disk.
 

@@ -121,7 +121,7 @@ export default function VoicePage() {
   const NUDGE_DELAY_MS = 15000;
 
   // Prefetched data refs — loaded on page mount so start() is instant
-  const prefetchedConfigRef = useRef<{ wss_url: string; voice_name?: string; personal_voice_profile_id?: string } | null>(null);
+  const prefetchedConfigRef = useRef<{ wss_url: string; voice_name?: string; personal_voice_profile_id?: string; personal_voice_name?: string } | null>(null);
   const prefetchedPromptRef = useRef<string | null>(null);
   const prefetchedGreetingRef = useRef<{ phrase: string; audio_b64: string } | null>(null);
 
@@ -275,12 +275,12 @@ export default function VoicePage() {
   }
 
   function buildSessionConfig(instructions?: string) {
-    const personalVoiceProfileId = prefetchedConfigRef.current?.personal_voice_profile_id || "";
+    const personalVoiceName = prefetchedConfigRef.current?.personal_voice_name || "";
     const configuredVoiceName = prefetchedConfigRef.current?.voice_name || voiceName;
-    const voiceConfig = personalVoiceProfileId
+    const voiceConfig = personalVoiceName
       ? {
-          name: personalVoiceProfileId,
           type: "azure-personal",
+          name: personalVoiceName,
           model: "DragonLatestNeural",
           temperature,
         }

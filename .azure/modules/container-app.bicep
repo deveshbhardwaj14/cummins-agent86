@@ -62,6 +62,9 @@ param customDomainCertName string = ''
 @description('Azure Personal Voice Speaker Profile ID. Empty (the default) keeps the standard voice. When non-empty, surfaced to the backend as AZURE_PERSONAL_VOICE_PROFILE_ID; /api/voice-config then flips the frontend onto the azure-personal voice schema.')
 param personalVoiceProfileId string = ''
 
+@description('Azure Personal Voice name. Used with personalVoiceProfileId; surfaced to the backend as AZURE_PERSONAL_VOICE_NAME.')
+param personalVoiceName string = ''
+
 @description('Optional path inside container to the system prompt file.')
 param systemPromptFile string = ''
 
@@ -244,6 +247,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             ] : [],
             personalVoiceProfileId != '' ? [
               { name: 'AZURE_PERSONAL_VOICE_PROFILE_ID', value: personalVoiceProfileId }
+              { name: 'AZURE_PERSONAL_VOICE_NAME', value: personalVoiceName }
             ] : [],
             hasAppInsightsConnectionString ? [
               { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', secretRef: 'appinsights-connection-string' }

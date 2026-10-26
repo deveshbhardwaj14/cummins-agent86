@@ -30,6 +30,7 @@ VOICELIVE_API_VERSION = os.getenv("AZURE_VOICELIVE_API_VERSION", "2025-10-01")
 VOICELIVE_MODEL = os.getenv("AZURE_VOICELIVE_MODEL", "gpt-5.2")
 VOICELIVE_VOICE = os.getenv("AZURE_VOICELIVE_VOICE", "en-US-Andrew:DragonHDLatestNeural")
 PERSONAL_VOICE_PROFILE_ID = os.getenv("AZURE_PERSONAL_VOICE_PROFILE_ID", "")
+PERSONAL_VOICE_NAME = os.getenv("AZURE_PERSONAL_VOICE_NAME", "")
 # Auth mode: 'key' (legacy, uses VOICELIVE_API_KEY) or 'mi' (Microsoft
 # Entra via DefaultAzureCredential — requires the UAMI to have
 # Cognitive Services User on the Voice Live account).

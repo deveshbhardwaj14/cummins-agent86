@@ -136,6 +136,9 @@ param customDomainCertName string = ''
 @description('Azure Personal Voice Speaker Profile ID (GUID). Only used when features.customVoice. Surfaced to the Container App as AZURE_PERSONAL_VOICE_PROFILE_ID; the backend reads it in app/config.py and surfaces it to the frontend via /api/voice-config, which switches the Voice Live session to the azure-personal voice schema. Leave empty to keep the standard voice (e.g. while waiting for Personal Voice access to be approved).')
 param personalVoiceProfileId string = ''
 
+@description('Azure Personal Voice name (the Speaker Profile ID GUID echoed by Voice Live as voice.name, the same value as personalVoiceProfileId). Required with personalVoiceProfileId. Sent as voice.name in the Voice Live session.')
+param personalVoiceName string = ''
+
 @description('AI Search service name (only used when features.rag). Globally unique.')
 param searchServiceName string = ''
 
@@ -656,6 +659,7 @@ module app 'modules/container-app.bicep' = if (deployApp) {
     customDomainName: features.customDomain ? customDomainName : ''
     customDomainCertName: features.customDomain ? customDomainCertName : ''
     personalVoiceProfileId: features.customVoice ? personalVoiceProfileId : ''
+    personalVoiceName: features.customVoice ? personalVoiceName : ''
     systemPromptFile: systemPromptFile != '' ? systemPromptFile : 'agents/${projectName}/system_prompt.txt'
     knowledgeBaseFile: knowledgeBaseFile != '' ? knowledgeBaseFile : 'agents/${projectName}/knowledge_base.json'
     partnersFile: partnersFile != '' ? partnersFile : 'agents/${projectName}/partners.json'

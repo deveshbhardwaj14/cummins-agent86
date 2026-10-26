@@ -1419,6 +1419,7 @@ async function main() {
             `customDomainCertName=${(s.customDomain && s.customDomain.certName) || ''}`,
             `voiceLiveVoice=${(s.agent && s.agent.voice) || 'en-US-Andrew:DragonHDLatestNeural'}`,
             `personalVoiceProfileId=${s.features && s.features.customVoice ? ((s.customVoice && s.customVoice.profileId) || '') : ''}`,
+            `personalVoiceName=${s.features && s.features.customVoice ? ((s.customVoice && s.customVoice.name) || '') : ''}`,
             `searchServiceName=${s.features && s.features.rag ? names.searchServiceName : ''}`,
             `ragStorageAccountName=${s.features && s.features.rag ? names.ragStorageAccount : ''}`,
             `ragContainerName=${names.ragContainerName}`,

@@ -132,8 +132,10 @@ function backendEnv(s) {
     // a stale value from the parent shell can't shadow a disabled /
     // not-yet-configured feature.
     delete env.AZURE_PERSONAL_VOICE_PROFILE_ID;
+    delete env.AZURE_PERSONAL_VOICE_NAME;
     if (s.features && s.features.customVoice && s.customVoice && s.customVoice.profileId) {
         env.AZURE_PERSONAL_VOICE_PROFILE_ID = s.customVoice.profileId;
+        if (s.customVoice.name) env.AZURE_PERSONAL_VOICE_NAME = s.customVoice.name;
     }
 
     // RAG: point local backend at the deployed Search service so you

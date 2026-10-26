@@ -19,6 +19,7 @@ from app.config import (
     VOICELIVE_VOICE,
     VOICELIVE_AUTH_MODE,
     PERSONAL_VOICE_PROFILE_ID,
+    PERSONAL_VOICE_NAME,
     get_voicelive_bearer_token,
 )
 from app import knowledge_base
@@ -102,8 +103,9 @@ async def voice_config(user: dict = Depends(get_current_user)):
         f"&model={VOICELIVE_MODEL}"
     )
     resp: dict = {"wss_url": wss_url, "voice_name": VOICELIVE_VOICE}
-    if PERSONAL_VOICE_PROFILE_ID:
+    if PERSONAL_VOICE_PROFILE_ID and PERSONAL_VOICE_NAME:
         resp["personal_voice_profile_id"] = PERSONAL_VOICE_PROFILE_ID
+        resp["personal_voice_name"] = PERSONAL_VOICE_NAME
     return JSONResponse(resp)
 
 
