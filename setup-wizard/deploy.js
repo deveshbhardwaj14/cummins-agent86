@@ -404,6 +404,7 @@ function submitDeployment({ name, resourceGroup, templateFile, params }) {
         '--resource-group', resourceGroup,
         '--template-file', templateFile,
         '--parameters', ...params,
+        '--no-wait',
         '--only-show-errors',
         '-o', 'none',
     ];
@@ -415,6 +416,17 @@ function submitDeployment({ name, resourceGroup, templateFile, params }) {
         const preflight = tryExtractPreflightError(createArgs);
         if (preflight) die(`Deployment ${name} failed:\n  ${preflight}${cleanupHint(resourceGroup)}`);
         die(`az deployment failed:\n${(createRes.stderr || createRes.stdout || '').trim()}${cleanupHint(resourceGroup)}`);
+    }
+    const waitRes = spawnAz([
+        'deployment', 'group', 'wait',
+        '--name', name,
+        '--resource-group', resourceGroup,
+        '--created', '--interval', '20', '--timeout', '3600',
+        '--only-show-errors',
+    ], { encoding: 'utf8' });
+    if (waitRes.status !== 0) {
+        const realError = tryReadDeploymentError(name, resourceGroup);
+        die(`Deployment ${name} did not complete successfully:\n${realError || (waitRes.stderr || waitRes.stdout || '').trim()}`);
     }
     const result = azJson([
         'deployment', 'group', 'show',
@@ -741,7 +753,7 @@ function configureSearchIndexer(s, names, embeddings, opts = {}) {
 
     if (!embeddings || !embeddings.endpoint || !embeddings.deployment) {
         warn('Embeddings endpoint missing from bicep outputs. Skipping search setup.');
-        return;
+        return false;
     }
 
     // Set once we detect that the deployer's egress IP doesn't match what
@@ -766,11 +778,12 @@ function configureSearchIndexer(s, names, embeddings, opts = {}) {
         log('    │ To finish setup:');
         log('    │   1. Open the AI Search resource in the Azure Portal');
         log(`    │        ${names.searchServiceName} (Networking > Firewall)`);
-        log('    │   2. Add your *actual* Azure-egress IP to the firewall allow-list,');
-        log('    │      or temporarily set "All networks" while you re-run ./deploy');
-        log('    │      (the wizard re-locks it to Disabled at the end of pass 2).');
-        log('    │   3. Update network.deployerIpAddress in settings.json to that IP.');
-        log('    │   4. Re-run ./deploy. The indexer step will pick up where it left off.');
+        log('    │   2. Confirm the deploying machine\'s Azure-egress IPv4 with your');
+        log('    │      network administrator (including any proxy / NAT / VPN).');
+        log('    │   3. Set network.deployerIpAddress in settings.json to that IP.');
+        log('    │   4. Re-run ./deploy --skip-build using the same network route.');
+        log('    │      Do not use --skip-infra or --search-only in network mode.');
+        log('    │      Manual firewall changes are overwritten by redeployment.');
         log('    └──────────────────────────────────────────────────────────────────────');
         log('');
     }
@@ -947,7 +960,7 @@ function configureSearchIndexer(s, names, embeddings, opts = {}) {
 
     if (!dsOk || !idxOk || !skillsetOk) {
         warn('Skipping indexer creation due to earlier failures.');
-        return;
+        return false;
     }
 
     // 4. Indexer — runs the skillset, projects to the index. Schedule
@@ -980,7 +993,9 @@ function configureSearchIndexer(s, names, embeddings, opts = {}) {
         fieldMappings: [],
         outputFieldMappings: [],
     };
-    searchPut(`/indexers/${names.searchIndexerName}`, indexerBody, 'indexer');
+    if (!searchPut(`/indexers/${names.searchIndexerName}`, indexerBody, 'indexer')) {
+        return false;
+    }
 
     // 5. Kick it off so the user doesn't wait 5 minutes for the first run.
     const runRes = az([
@@ -990,6 +1005,8 @@ function configureSearchIndexer(s, names, embeddings, opts = {}) {
         '--resource', 'https://search.azure.com/',
     ], { allowFail: true });
     if (runRes.ok) ok('indexer kicked off (initial run)');
+    else warn(`Initial indexer run could not be started: ${(runRes.stderr || runRes.stdout || '').trim()}. Check indexer status; its five-minute schedule remains configured.`);
+    return true;
 }
 
 // Grant the Search MSI 'Cognitive Services OpenAI User' on an existing
@@ -1349,11 +1366,12 @@ async function main() {
         if (!cached.endpoint || !cached.deployment) {
             die('--search-only requires a previous successful deploy (no embeddings endpoint cached). Run ./deploy first.');
         }
-        configureSearchIndexer(s, names, {
+        const searchSetupOk = configureSearchIndexer(s, names, {
             endpoint:   cached.endpoint,
             deployment: cached.deployment,
             model:      cached.model || 'text-embedding-3-large',
         });
+        if (!searchSetupOk) die('AI Search RAG pipeline setup failed. Resolve the errors above and retry.');
         log('');
         log('================================================================');
         log('  Search pipeline reconfigured.');
@@ -1455,6 +1473,7 @@ async function main() {
 
     const networkMode = !!(s.network && s.network.enabled);
     const ragEnabled = !!(s.features && s.features.rag);
+    let searchSetupOk = true;
 
     if (!FLAG_SKIP_INFRA) {
         // Pass 1: provision ACR + env + identity + (optional) Voice Live
@@ -1555,7 +1574,7 @@ async function main() {
         if (s.ragEmbeddings && s.ragEmbeddings.endpoint) {
             grantSearchAccessToExistingEmbeddings(s, names);
         }
-        configureSearchIndexer(s, names, embeddings, { networkMode: true });
+        searchSetupOk = configureSearchIndexer(s, names, embeddings, { networkMode: true });
     }
 
     if (!FLAG_SKIP_INFRA) {
@@ -1637,7 +1656,13 @@ async function main() {
             grantSearchAccessToExistingEmbeddings(s, names);
         }
 
-        configureSearchIndexer(s, names, embeddings);
+        searchSetupOk = configureSearchIndexer(s, names, embeddings);
+    }
+
+    if (!searchSetupOk) {
+        die('Infrastructure deployment completed, but AI Search RAG pipeline setup failed. ' +
+            (networkMode ? 'Search public access has been disabled again by pass 2. ' : '') +
+            'Resolve the errors above and re-run ./deploy --skip-build. Do not use --skip-infra.');
     }
 
     s.deploy = s.deploy || {};

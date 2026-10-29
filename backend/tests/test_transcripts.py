@@ -134,6 +134,58 @@ class ResponseUsageTests(unittest.TestCase):
         self.assertEqual(sink.responses, {})
         self.assertIsNone(sink.usage)
 
+class TextConversationTests(unittest.TestCase):
+    def test_typed_message_and_text_reply_preserve_order_and_ids(self):
+        sink = _make_sink()
+        sink.on_event({
+            "type": "conversation.item.created",
+            "item": {"id": "typed-1", "type": "message", "role": "user",
+                     "content": [{"type": "input_text", "text": "My typed question"}]},
+        })
+        sink.on_event({
+            "type": "response.text.done", "item_id": "answer-1",
+            "response_id": "response-1", "text": "A text-only answer",
+        })
+        self.assertEqual([turn["role"] for turn in sink.turns], ["user", "agent"])
+        self.assertEqual(sink.turns[0]["text"], "My typed question")
+        self.assertEqual(sink.turns[0]["messageId"], "typed-1")
+        self.assertEqual(sink.turns[1]["text"], "A text-only answer")
+        self.assertEqual(sink.turns[1]["responseId"], "response-1")
+
+    def test_duplicate_typed_event_is_recorded_once(self):
+        sink = _make_sink()
+        event = {
+            "type": "conversation.item.created",
+            "item": {"id": "typed-1", "type": "message", "role": "user",
+                     "content": [{"type": "input_text", "text": "Hello"}]},
+        }
+        sink.on_event(event)
+        sink.on_event(event)
+        self.assertEqual(len(sink.turns), 1)
+
+    def test_audio_and_assistant_items_do_not_create_typed_user_turns(self):
+        sink = _make_sink()
+        for role, content in [
+            ("assistant", [{"type": "text", "text": "Greeting"}]),
+            ("user", [{"type": "input_audio", "audio": "unused"}]),
+            ("user", [{"type": "input_text", "text": "  "}]),
+        ]:
+            sink.on_event({
+                "type": "conversation.item.created",
+                "item": {"type": "message", "role": role, "content": content},
+            })
+        self.assertEqual(sink.turns, [])
+
+    def test_text_audit_does_not_include_message_content(self):
+        sink = _make_sink()
+        with self.assertLogs("audit.transcript", level="INFO") as captured:
+            sink.on_event({
+                "type": "response.text.done", "item_id": "answer-1",
+                "response_id": "response-1", "text": "Confidential test message",
+            })
+        self.assertNotIn("Confidential test message", "".join(captured.output))
+        self.assertIn("turn.agent", "".join(captured.output))
+
 
 class AuditLogTests(unittest.TestCase):
     """The audit log line MUST NEVER contain transcript text and MUST

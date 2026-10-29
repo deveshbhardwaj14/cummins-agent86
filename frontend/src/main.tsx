@@ -13,7 +13,7 @@ import "./index.css";
 import App from "./App";
 
 // Set page title from env var (Vite doesn't interpolate env vars in index.html)
-document.title = import.meta.env.VITE_APP_TITLE || "Voice Agent";
+document.title = import.meta.env.VITE_APP_TITLE || "Agent86";
 
 const msalInstance = new PublicClientApplication(msalConfig);
 

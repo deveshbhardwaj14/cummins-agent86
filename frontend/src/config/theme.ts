@@ -1,22 +1,22 @@
 import { createLightTheme, type BrandVariants, type Theme } from "@fluentui/react-components";
 
 const agentJBrand: BrandVariants = {
-  10: "#050206",
-  20: "#1B0A31",
-  30: "#2C0F54",
-  40: "#3C1373",
-  50: "#4C1893",
-  60: "#5B1FB0",
-  70: "#6B27CC",
-  80: "#7B3BD6",
-  90: "#8B50DF",
-  100: "#9A66E7",
-  110: "#A87CEE",
-  120: "#B692F4",
-  130: "#C3A9F8",
-  140: "#D0BFFB",
-  150: "#DDD6FD",
-  160: "#EEEDFE",
+  10: "#210203",
+  20: "#390608",
+  30: "#570A0E",
+  40: "#700D13",
+  50: "#8B1018",
+  60: "#A5121D",
+  70: "#BA1420",
+  80: "#CE1628",
+  90: "#DC3847",
+  100: "#E65D69",
+  110: "#ED7E88",
+  120: "#F39DA5",
+  130: "#F8B8BE",
+  140: "#FBD0D4",
+  150: "#FDE5E7",
+  160: "#FFF3F4",
 };
 
 export const agentJTheme: Theme = {

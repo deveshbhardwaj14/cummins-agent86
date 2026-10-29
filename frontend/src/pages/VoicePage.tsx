@@ -4,6 +4,9 @@ import { InteractionStatus } from "@azure/msal-browser";
 import { loginRequest } from "../config/auth";
 import { FeedbackButton } from "../components/FeedbackButton";
 import { AppFooter } from "../components/AppFooter";
+import { ConversationClock, ConversationSetup, CumminsBrand } from "../components/ConversationSetup";
+import { DEFAULT_LANGUAGE, type ConversationLanguage } from "../config/languages";
+import { buildConversationSession, buildNudgeResponse, usesCachedAudio, type InteractionMode } from "../utils/conversation";
 import { devLog } from "../utils/devLog";
 import {
   Button,
@@ -21,10 +24,12 @@ import {
   MicOff24Filled,
   DoorArrowLeft24Filled,
   Subtitles24Regular,
-  Alert24Regular,
   Dismiss24Regular,
   Send24Regular,
   SignOut24Regular,
+  ArrowRight24Regular,
+  Chat24Regular,
+  Globe24Regular,
 } from "@fluentui/react-icons";
 
 const SAMPLE_RATE = 24000;
@@ -68,7 +73,12 @@ export default function VoicePage() {
   }, [isAuthenticated, inProgress, instance, authError]);
 
   const [callState, setCallState] = useState<CallState>("idle");
-  const [voiceStatus, setVoiceStatus] = useState<VoiceStatus>("ready");
+  const [voiceStatus, setVoiceStatusState] = useState<VoiceStatus>("ready");
+  const voiceStatusRef = useRef<VoiceStatus>("ready");
+  const setVoiceStatus = useCallback((status: VoiceStatus) => {
+    voiceStatusRef.current = status;
+    setVoiceStatusState(status);
+  }, []);
   const [statusText, setStatusText] = useState("Ready");
   const [micEnabled, setMicEnabled] = useState(true);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
@@ -80,6 +90,12 @@ export default function VoicePage() {
   const [showBanner, setShowBanner] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [interactionMode, setInteractionMode] = useState<InteractionMode>("voice");
+  const [language, setLanguage] = useState<ConversationLanguage>(DEFAULT_LANGUAGE);
+  const [sessionStartedAt, setSessionStartedAt] = useState<number | null>(null);
+  const activePreferencesRef = useRef<{ mode: InteractionMode; language: ConversationLanguage }>({
+    mode: "voice", language: DEFAULT_LANGUAGE,
+  });
 
   // Close user menu when clicking outside
   useEffect(() => {
@@ -117,6 +133,7 @@ export default function VoicePage() {
   const nudgeClipsRef = useRef<{ phrase: string; pcm: ArrayBuffer }[]>([]);
   const nudgeLastIndexRef = useRef(-1);
   const nudgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const responseGenerationRef = useRef(0);
   const sessionInitRef = useRef(false);
   const NUDGE_DELAY_MS = 15000;
 
@@ -243,6 +260,7 @@ export default function VoicePage() {
   }
 
   function playRandomFiller() {
+    if (!usesCachedAudio(activePreferencesRef.current.mode, activePreferencesRef.current.language)) return;
     const clips = fillerClipsRef.current;
     if (clips.length === 0 || !playCtxRef.current) return;
     let idx = Math.floor(Math.random() * (clips.length - 1));
@@ -253,17 +271,33 @@ export default function VoicePage() {
 
   function startNudgeTimer() {
     clearNudgeTimer();
+    const sessionSocket = wsRef.current;
+    if (activePreferencesRef.current.mode !== "voice" || sessionSocket?.readyState !== WebSocket.OPEN) return;
     const bufferedMs = playCtxRef.current
       ? Math.max(0, (nextPlayTimeRef.current - playCtxRef.current.currentTime) * 1000)
       : 0;
     nudgeTimerRef.current = setTimeout(function onNudge() {
+      const preferences = activePreferencesRef.current;
+      const playCtx = playCtxRef.current;
+      if (wsRef.current !== sessionSocket || sessionSocket.readyState !== WebSocket.OPEN
+        || preferences.mode !== "voice" || voiceStatusRef.current !== "ready" || !playCtx) return;
       const clips = nudgeClipsRef.current;
-      if (!playCtxRef.current || clips.length === 0) return;
-      let idx = Math.floor(Math.random() * (clips.length - 1));
-      if (idx >= nudgeLastIndexRef.current) idx++;
-      nudgeLastIndexRef.current = idx;
-      scheduleAudio(clips[idx].pcm);
-      nudgeTimerRef.current = setTimeout(onNudge, NUDGE_DELAY_MS);
+      if (usesCachedAudio(preferences.mode, preferences.language) && clips.length > 0) {
+        let idx = 0;
+        if (clips.length > 1) {
+          idx = Math.floor(Math.random() * (clips.length - 1));
+          if (idx >= nudgeLastIndexRef.current) idx++;
+        }
+        nudgeLastIndexRef.current = idx;
+        scheduleAudio(clips[idx].pcm);
+        const remainingMs = Math.max(0, (nextPlayTimeRef.current - playCtx.currentTime) * 1000);
+        nudgeTimerRef.current = setTimeout(onNudge, NUDGE_DELAY_MS + remainingMs);
+      } else {
+        console.info("Cached nudge audio unavailable; generating a check-in with the active session voice.");
+        setVoiceStatus("speaking");
+        setStatusText("Checking in...");
+        wsSend({ type: "response.create", response: buildNudgeResponse(preferences.language) });
+      }
     }, NUDGE_DELAY_MS + bufferedMs);
   }
 
@@ -275,51 +309,13 @@ export default function VoicePage() {
   }
 
   function buildSessionConfig(instructions?: string) {
-    const personalVoiceName = prefetchedConfigRef.current?.personal_voice_name || "";
-    const configuredVoiceName = prefetchedConfigRef.current?.voice_name || voiceName;
-    const voiceConfig = personalVoiceName
-      ? {
-          type: "azure-personal",
-          name: personalVoiceName,
-          model: "DragonLatestNeural",
-          temperature,
-        }
-      : { name: configuredVoiceName, type: "azure-standard", temperature };
-    const session: Record<string, unknown> = {
-      input_audio_sampling_rate: SAMPLE_RATE,
-      turn_detection: {
-        type: "azure_semantic_vad",
-        threshold: 0.3,
-        prefix_padding_ms: 500,
-        silence_duration_ms: 500,
-        speech_duration_ms: 80,
-        remove_filler_words: true,
-        interrupt_response: true,
-        auto_truncate: true,
-        eagerness: vadEagerness,
-      },
-      input_audio_echo_cancellation: { type: "server_echo_cancellation" },
-      input_audio_transcription: { model: "azure-speech", language: "en" },
-      voice: voiceConfig,
-      tools: [
-        {
-          type: "function",
-          name: "search_knowledge_base",
-          description: "Search the knowledge base for relevant information to support the coaching conversation.",
-          parameters: {
-            type: "object",
-            properties: { query: { type: "string", description: "Search query" } },
-            required: ["query"],
-          },
-        },
-      ],
-      tool_choice: "auto",
-    };
-    if (instructions) session.instructions = instructions;
-    if (noiseSuppression !== "none") {
-      session.input_audio_noise_reduction = { type: noiseSuppression };
-    }
-    return session;
+    return buildConversationSession({
+      ...activePreferencesRef.current,
+      instructions,
+      voiceName: prefetchedConfigRef.current?.voice_name || voiceName,
+      personalVoiceName: prefetchedConfigRef.current?.personal_voice_name,
+      temperature, vadEagerness, noiseSuppression,
+    });
   }
 
   // Push settings to Azure when changed mid-session
@@ -410,12 +406,20 @@ export default function VoicePage() {
       type?: string;
       delta?: string;
       transcript?: string;
+      text?: string;
       item?: { type?: string; call_id?: string; name?: string; id?: string };
       call_id?: string;
       arguments?: string;
       error?: { message?: string };
       item_id?: string;
       response_id?: string;
+      response?: {
+        status?: string;
+        status_details?: {
+          error?: { code?: string; message?: string };
+          reason?: string;
+        };
+      };
     }) => {
       const t = event.type || "";
       devLog("Voice event:", t, event);
@@ -437,7 +441,8 @@ export default function VoicePage() {
         // Only do init (mic, greeting, clip loading) on the first session.updated
         if (!sessionInitRef.current) {
           sessionInitRef.current = true;
-          workletRef.current!.port.onmessage = (e) => {
+          setSessionStartedAt(Date.now());
+          if (workletRef.current) workletRef.current.port.onmessage = (e) => {
             if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN)
               return;
             wsSend({
@@ -446,6 +451,18 @@ export default function VoicePage() {
             });
           };
           setCallState("connected");
+          const preferences = activePreferencesRef.current;
+          if (!usesCachedAudio(preferences.mode, preferences.language)) {
+            setVoiceStatus(preferences.mode === "chat" ? "ready" : "speaking");
+            setStatusText(preferences.mode === "chat" ? "Ready to chat" : "Agent speaking...");
+            wsSend({
+              type: "response.create",
+              response: {
+                instructions: `Follow the session's persona and safety rules. Greet the user briefly in ${preferences.language.label} (${preferences.language.code}) and invite their question.${prefetchedGreetingRef.current?.phrase ? ` Translate this configured welcome into that language: ${JSON.stringify(prefetchedGreetingRef.current.phrase)}` : ""}`,
+              },
+            });
+            return;
+          }
           setVoiceStatus("speaking");
           setStatusText("Agent speaking...");
           // Filler & nudge clips already prefetched — fetch only if missing
@@ -519,12 +536,17 @@ export default function VoicePage() {
               });
           }
         }
-      } else if (t === "response.audio.delta") {
+      } else if (t === "response.created") {
+        responseGenerationRef.current++;
+        clearNudgeTimer();
+        setVoiceStatus("speaking");
+        setStatusText(activePreferencesRef.current.mode === "chat" ? "Responding..." : "Agent speaking...");
+      } else if (t === "response.audio.delta" && activePreferencesRef.current.mode === "voice") {
         clearNudgeTimer();
         scheduleAudio(base64ToArrayBuffer(event.delta!));
         setVoiceStatus("speaking");
         setStatusText("Speaking...");
-      } else if (t === "response.audio_transcript.delta") {
+      } else if (t === "response.audio_transcript.delta" || (t === "response.text.delta" && activePreferencesRef.current.mode === "chat")) {
         const delta = event.delta || "";
         const responseId = event.response_id;
         agentTextRef.current += delta;
@@ -572,8 +594,8 @@ export default function VoicePage() {
             { role: "agent", text: delta, streaming: true, responseId },
           ];
         });
-      } else if (t === "response.audio_transcript.done") {
-        const final = event.transcript;
+      } else if (t === "response.audio_transcript.done" || (t === "response.text.done" && activePreferencesRef.current.mode === "chat")) {
+        const final = event.transcript ?? event.text;
         const responseId = event.response_id;
         setTranscript((prev) => {
           let idx = -1;
@@ -709,6 +731,7 @@ export default function VoicePage() {
           return [...prev.slice(0, idx), ...prev.slice(idx + 1)];
         });
       } else if (t === "input_audio_buffer.speech_started") {
+        responseGenerationRef.current++;
         clearNudgeTimer();
         setVoiceStatus("listening");
         setStatusText("Listening...");
@@ -743,11 +766,15 @@ export default function VoicePage() {
       } else if (t === "response.audio.done") {
         // Delay status change until scheduled audio finishes playing
         const playCtx = playCtxRef.current;
+        const sessionSocket = wsRef.current;
+        const responseGeneration = responseGenerationRef.current;
         if (playCtx) {
           const remainingMs = Math.max(0, (nextPlayTimeRef.current - playCtx.currentTime) * 1000);
           setTimeout(() => {
             // Only switch if still in speaking state (user may have interrupted)
-            if (wsRef.current) {
+            if (wsRef.current === sessionSocket && sessionSocket
+              && responseGenerationRef.current === responseGeneration
+              && voiceStatusRef.current === "speaking") {
               setVoiceStatus("ready");
               setStatusText("Ready");
               startNudgeTimer();
@@ -785,18 +812,38 @@ export default function VoicePage() {
           pending.arguments = event.arguments || pending.arguments;
           executeFunctionCall(pending);
         }
+      } else if (t === "response.done" && event.response?.status === "failed") {
+        const responseError = event.response.status_details?.error;
+        const message = responseError?.message
+          || event.response.status_details?.reason
+          || "Voice response failed. Check the Voice Live configuration and service logs.";
+        const detail = responseError?.code ? `${responseError.code}: ${message}` : message;
+        console.error("Azure voice response failed:", responseError || message);
+        clearNudgeTimer();
+        clearPlayback();
+        agentTextRef.current = "";
+        setVoiceStatus("error");
+        setStatusText("Error: " + detail);
+        setTranscript((prev) => [
+          ...prev.map((entry) => entry.streaming ? { ...entry, streaming: false } : entry),
+          { role: "system", text: "Voice response failed: " + detail },
+        ]);
+      } else if (t === "response.done" && event.response?.status === "completed" && activePreferencesRef.current.mode === "chat") {
+        setVoiceStatus("ready");
+        setStatusText("Ready to chat");
       } else if (t === "error") {
         console.error("Azure error:", event);
         setVoiceStatus("error");
         setStatusText("Error: " + (event.error?.message || "unknown"));
       }
     },
-    [getToken],
+    [getToken, setVoiceStatus],
   );
 
   // ── Start / stop / mic toggle ──
 
   const cleanupConnection = useCallback(() => {
+    setSessionStartedAt(null);
     pendingCallsRef.current = {};
     agentTextRef.current = "";
     clearNudgeTimer();
@@ -837,6 +884,9 @@ export default function VoicePage() {
       intentionalCloseRef.current = false;
       setCallState("connecting");
       setStatusText("Connecting...");
+      activePreferencesRef.current = { mode: interactionMode, language };
+      setTranscript([]);
+      setShowTranscript(interactionMode === "chat");
       const token = await getToken();
       if (token) sessionStorage.setItem("_voice_token", token);
 
@@ -846,9 +896,12 @@ export default function VoicePage() {
         const resp = await fetch("/api/voice-config", {
           headers: authHeaders(token),
         });
+        if (!resp.ok) throw new Error(`Voice configuration request failed: ${resp.status}`);
         config = await resp.json();
+        prefetchedConfigRef.current = config;
       }
 
+      if (interactionMode === "voice") {
       const micStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           sampleRate: SAMPLE_RATE,
@@ -899,6 +952,7 @@ export default function VoicePage() {
 
       playCtxRef.current = new AudioContext({ sampleRate: SAMPLE_RATE });
       nextPlayTimeRef.current = 0;
+      }
 
       // Connect to backend WS proxy via single-use ticket exchange.
       // We avoid putting the long-lived MSAL JWT in the WS query string
@@ -966,7 +1020,7 @@ export default function VoicePage() {
       setVoiceStatus("error");
       setStatusText("Error: " + (err as Error).message);
     }
-  }, [cleanupConnection, getToken, handleEvent]);
+  }, [cleanupConnection, getToken, handleEvent, interactionMode, language, setVoiceStatus]);
 
   const stop = useCallback(() => {
     intentionalCloseRef.current = true;
@@ -975,7 +1029,7 @@ export default function VoicePage() {
     setStatusText("Ready");
     setMicEnabled(true);
     cleanupConnection();
-  }, [cleanupConnection]);
+  }, [cleanupConnection, setVoiceStatus]);
 
   const toggleMic = useCallback(() => {
     if (!micStreamRef.current) return;
@@ -987,6 +1041,10 @@ export default function VoicePage() {
   const sendText = useCallback(() => {
     const msg = textInput.trim();
     if (!msg || callState !== "connected") return;
+    responseGenerationRef.current++;
+    clearNudgeTimer();
+    setVoiceStatus("speaking");
+    setStatusText("Responding...");
     wsSend({
       type: "conversation.item.create",
       item: {
@@ -998,7 +1056,7 @@ export default function VoicePage() {
     wsSend({ type: "response.create" });
     setTranscript((prev) => [...prev, { role: "user", text: msg }]);
     setTextInput("");
-  }, [textInput, callState]);
+  }, [textInput, callState, setVoiceStatus]);
 
   const login = () => instance.loginRedirect(loginRequest);
   const logout = () => {
@@ -1027,9 +1085,7 @@ export default function VoicePage() {
           textAlign: "center",
         }}
       >
-        <Text size={600} weight="semibold">
-          {import.meta.env.VITE_APP_TITLE || "Voice Agent"}
-        </Text>
+        <CumminsBrand />
         {authError ? (
           <>
             <MessageBar intent="error" style={{ maxWidth: 640 }}>
@@ -1078,10 +1134,9 @@ export default function VoicePage() {
     return (
       <>
         <header className="app-header">
-          <Text weight="semibold" size={400} className="logo-text">
-            {import.meta.env.VITE_APP_TITLE || "Voice Agent"}
-          </Text>
+          <CumminsBrand />
           <div className="header-right">
+            <ConversationClock />
             {/* Seismic toggle hidden for now
             <Switch
               checked={seismicEnabled}
@@ -1186,30 +1241,35 @@ export default function VoicePage() {
         )}
 
         <main className="landing-page">
+          <div className="landing-layout">
           <div className="landing-content">
+            <span className="landing-eyebrow"><span /> THE CUMMINS AI EXPERIENCE</span>
             <Text as="h1" size={900} weight="semibold" className="landing-title">
-              {import.meta.env.VITE_APP_TITLE || "Voice Agent"}
+              {import.meta.env.VITE_APP_TITLE || "Agent86"}
             </Text>
 
             <Text as="h2" size={400} weight="semibold" className="landing-section-title">
-              Overview
+              Cummins CIO Earl's digital twin
             </Text>
 
             <Text as="p" size={400} className="landing-text">
-              {import.meta.env.VITE_APP_DESCRIPTION || "Voice Agent is an AI-powered coaching assistant built on Azure AI Foundry. It provides interactive, real-time guidance through natural voice conversations."}
+              {import.meta.env.VITE_APP_DESCRIPTION || "Your AI-powered partner for thoughtful questions, useful insights, and the next step forward."}
             </Text>
             <Text as="p" size={400} className="landing-text">
-              {import.meta.env.VITE_APP_DESCRIPTION_2 || "Ask questions about Azure AI Foundry, get help building AI solutions, or explore platform capabilities through a personalized coaching experience."}
+              {import.meta.env.VITE_APP_DESCRIPTION_2 || "Explore enterprise knowledge through a natural voice conversation or a focused text chat, in the language you choose."}
             </Text>
-
-            <Text as="p" weight="bold" size={400} className="landing-warning">
-              This is an internal demo.
-            </Text>
-
-            <Text as="p" size={400} className="landing-text">
-              This agent is for demonstration purposes only.
-            </Text>
-
+            <div className="experience-highlights">
+              <span><Chat24Regular /> Chat or voice</span>
+              <span><Globe24Regular /> Your language</span>
+            </div>
+            <p className="demo-notice">Internal demonstration · AI-generated content may be incorrect.</p>
+          </div>
+          <section className="session-card" aria-labelledby="session-setup-title">
+            <span className="card-eyebrow">LET'S GET STARTED</span>
+            <h2 id="session-setup-title">Make it your conversation.</h2>
+            <p className="card-description">Choose your mode and language. We'll take it from here.</p>
+            <ConversationSetup mode={interactionMode} language={language}
+              onModeChange={setInteractionMode} onLanguageChange={setLanguage} />
             <Button
               appearance="primary"
               shape="circular"
@@ -1217,13 +1277,16 @@ export default function VoicePage() {
               className="talk-btn"
               onClick={isAuthenticated ? start : login}
               disabled={callState as string === "connecting"}
+              icon={<ArrowRight24Regular />}
+              iconPosition="after"
             >
-              {import.meta.env.VITE_APP_BUTTON_LABEL || "Talk to Voice Agent"}
+              {interactionMode === "chat" ? "Start text conversation" : (import.meta.env.VITE_APP_BUTTON_LABEL || "Start voice conversation")}
             </Button>
 
             <Text size={200} className="disclaimer">
-              AI-generated content may be incorrect
+              {interactionMode === "chat" ? "Text only. Your microphone stays off." : "Microphone access is requested when you start."}
             </Text>
+          </section>
           </div>
         </main>
 
@@ -1232,14 +1295,38 @@ export default function VoicePage() {
     );
   }
 
+  const transcriptContent = (
+    <>
+      {transcript.map((entry, i) => (
+        <div key={i} className={`t-group ${entry.role}`}>
+          <div className="t-speaker-row">
+            <Text weight="semibold" size={300} className={`t-speaker ${entry.role}`}>
+              {entry.role === "user" ? (accounts[0]?.name?.split(" ")[0] || "You")
+                : entry.role === "agent" ? (import.meta.env.VITE_APP_TITLE || "Agent86") : "System"}
+            </Text>
+            {entry.role === "agent" && <span className="ai-badge">AI</span>}
+          </div>
+          <Text size={300} dir="auto"
+            className={`t-text ${entry.role} ${entry.streaming ? "streaming" : ""} ${entry.transcribing ? "transcribing" : ""}`}>
+            {entry.text}
+          </Text>
+        </div>
+      ))}
+      {transcript.length === 0 && <div className="conversation-empty">
+        <Chat24Regular /><h2>A good conversation starts here.</h2>
+        <p>{callState === "connecting" ? "Connecting to your assistant..." : "Ask a question to get started."}</p>
+      </div>}
+      <div ref={transcriptEndRef} />
+    </>
+  );
+
   // ── Conversation page (connecting/connected state) ──
   return (
-    <div className="conversation-bg">
+    <div className={`conversation-bg ${interactionMode}-mode`}>
       <header className="app-header conversation-header">
-        <Text weight="semibold" size={400} className="logo-text">
-          {import.meta.env.VITE_APP_TITLE || "Voice Agent"}<span className="header-separator">| Conversation</span>
-        </Text>
+        <CumminsBrand />
         <div className="header-right">
+          <ConversationClock startedAt={sessionStartedAt} />
           <FeedbackButton />
           {isAuthenticated && accounts[0] && (
             <div className="user-menu-container" style={{ position: "relative" }}>
@@ -1299,10 +1386,23 @@ export default function VoicePage() {
 
       <div className="app-body">
         <main className="conversation-page">
+          <div className="session-context">
+            <span className="session-mode">{interactionMode === "chat" ? <Chat24Regular /> : <Mic24Filled />}
+              {interactionMode === "chat" ? "Text conversation" : "Voice conversation"}</span>
+            <span><Globe24Regular /> {language.label}</span>
+            <span role="status" className={`connection-state ${callState}`}>{callState === "connected" ? "Connected" : callState === "error" ? "Connection issue" : "Connecting"}</span>
+          </div>
+          {interactionMode === "chat" ? (
+            <div className="chat-conversation transcript-body" role="log" aria-label="Conversation messages" aria-live="polite">
+              {transcriptContent}
+            </div>
+          ) : (
           <div className="conversation-status">
-            <Text size={600} weight="regular" className="status-text">
-              {voiceStatus === "listening" || voiceStatus === "ready"
-                ? "I'm listening"
+            <div className={`voice-orb ${voiceStatus}`} aria-hidden="true"><Mic24Filled /></div>
+            <Text size={600} weight="regular" className="status-text" role="status">
+              {callState === "connecting" ? "Connecting..."
+                : voiceStatus === "listening" || voiceStatus === "ready"
+                ? (micEnabled ? "I'm listening" : "Microphone is off")
                 : voiceStatus === "speaking"
                   ? "Responding"
                   : voiceStatus === "searching"
@@ -1321,24 +1421,31 @@ export default function VoicePage() {
               </div>
             )}
           </div>
+          )}
+          {interactionMode === "chat" && <p className={`chat-status ${voiceStatus}`} role="status">{statusText}</p>}
 
           <div className="control-bar">
             <div className="ctrl-left">
+              {interactionMode === "voice" && (
               <button
                 type="button"
                 className={`ctrl-icon-bare mic-btn ${!micEnabled ? "muted" : ""}`}
                 onClick={toggleMic}
+                aria-label={micEnabled ? "Mute microphone" : "Unmute microphone"}
+                aria-pressed={!micEnabled}
+                disabled={callState !== "connected"}
               >
                 {micEnabled ? <Mic24Filled /> : <MicOff24Filled />}
                 <span className="ctrl-label mic-label">{micEnabled ? "Mic on" : "Mic off"}</span>
               </button>
+              )}
               <button
                 type="button"
                 className="ctrl-icon-bare leave-btn"
                 onClick={stop}
               >
                 <DoorArrowLeft24Filled />
-                <span className="ctrl-label leave-label">Leave</span>
+                <span className="ctrl-label leave-label">End</span>
               </button>
             </div>
 
@@ -1347,10 +1454,12 @@ export default function VoicePage() {
             <div className="ctrl-mid">
               <Input
                 placeholder="Write message"
+                aria-label="Message to assistant"
+                disabled={callState !== "connected"}
                 value={textInput}
                 onChange={(_, data) => setTextInput(data.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") sendText();
+                  if (e.key === "Enter" && !e.nativeEvent.isComposing) sendText();
                 }}
                 className="chat-input"
                 contentAfter={
@@ -1358,8 +1467,9 @@ export default function VoicePage() {
                     appearance="transparent"
                     icon={<Send24Regular />}
                     size="small"
+                    aria-label="Send message"
                     onClick={sendText}
-                    disabled={!textInput.trim()}
+                    disabled={!textInput.trim() || callState !== "connected"}
                   />
                 }
               />
@@ -1368,60 +1478,26 @@ export default function VoicePage() {
               </Text>
             </div>
 
-            <div className="ctrl-right">
-              <button type="button" className="ctrl-icon-bare" title="Subtitles" onClick={() => setShowTranscript(prev => !prev)}>
+            {interactionMode === "voice" && <div className="ctrl-right">
+              <button type="button" className="ctrl-icon-bare" title="Transcript" aria-label="Toggle transcript" aria-expanded={showTranscript} onClick={() => setShowTranscript(prev => !prev)}>
                 <Subtitles24Regular />
               </button>
-              <button type="button" className="ctrl-icon-bare" title="Notifications">
-                <Alert24Regular />
-              </button>
-            </div>
+            </div>}
           </div>
         </main>
 
         {/* Transcript panel */}
-        <div className={`transcript-panel${showTranscript ? ' open' : ''}`}>
+        {interactionMode === "voice" && <div className={`transcript-panel${showTranscript ? ' open' : ''}`} aria-hidden={!showTranscript}>
           <div className="transcript-header">
             <span className="transcript-title">Transcript</span>
-            <button type="button" className="transcript-close" onClick={() => setShowTranscript(false)}>
+            <button type="button" className="transcript-close" aria-label="Close transcript" onClick={() => setShowTranscript(false)}>
               <Dismiss24Regular />
             </button>
           </div>
-          <div className="transcript-body">
-            {transcript.map((entry, i) => (
-              <div key={i} className="t-group">
-                <div className="t-speaker-row">
-                  <Text
-                    weight="semibold"
-                    size={300}
-                    className={`t-speaker ${entry.role}`}
-                  >
-                    {entry.role === "user"
-                      ? (accounts[0]?.name?.split(" ")[0] || "You")
-                      : entry.role === "agent"
-                        ? (import.meta.env.VITE_APP_TITLE || "Voice Agent")
-                        : "System"}
-                  </Text>
-                  {entry.role === "agent" && (
-                    <span className="ai-badge">AI-generated content may be incorrect</span>
-                  )}
-                </div>
-                <Text
-                  size={300}
-                  className={`t-text ${entry.role} ${entry.streaming ? "streaming" : ""} ${entry.transcribing ? "transcribing" : ""}`}
-                >
-                  {entry.text}
-                </Text>
-              </div>
-            ))}
-            {transcript.length === 0 && (
-              <Text size={300} style={{ color: "#a0a0a0" }}>
-                Transcript will appear here once the conversation starts.
-              </Text>
-            )}
-            <div ref={transcriptEndRef} />
+          <div className="transcript-body" role="log" aria-label="Voice transcript" aria-live="polite">
+            {transcriptContent}
           </div>
-        </div>
+        </div>}
       </div>
 
       <AppFooter className="app-footer conversation-footer" />

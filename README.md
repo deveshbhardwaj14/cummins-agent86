@@ -28,6 +28,29 @@ After setup, customize your agent (optional) by opening this folder in your codi
 
 Reads `settings.json`, runs the backend on `http://localhost:8000` and the frontend on `http://localhost:5173`. Auth is disabled locally so you can browse the UI without a working app reg. Voice still needs `AZURE_VOICELIVE_API_KEY` in `.env` and a deployed Voice Live endpoint in `settings.json` — without them the landing page renders but the "Talk" button won't connect.
 
+### Conversation experience
+
+The Cummins-branded **Agent86** interface presents Cummins CIO Earl's digital
+twin. The start screen offers **Voice conversation** and **Text
+conversation**, with English (United States) selected by default. Type an English
+or native language name, or a locale code, into the language picker to filter
+Azure Speech's supported transcription locales. The selection applies to model
+reply instructions and, in Voice mode, speech transcription. Actual spoken
+language support depends on the deployed model and configured voice.
+
+Text mode uses the same authenticated Voice Live connection and knowledge-base
+tool, but requests text-only replies and never opens the microphone or plays
+audio. Voice mode retains the personal voice configuration, typed messages, and
+an optional transcript. When both personal-voice settings are configured, cached
+welcome and idle-nudge clips use that personal voice; search fillers retain the
+standard voice. When cached nudges are unavailable, Voice mode generates gentle
+check-ins through the active Voice Live session, retaining its configured voice.
+English cached welcome/filler/nudge clips are not played for non-English
+sessions; their opening and idle nudges are generated live in the selected
+language. Text mode never generates idle nudges. The header shows the browser's
+local date/time and an elapsed session timer once connected. End the conversation
+to change mode or language.
+
 When you're ready, deploy:
 
 ```bash

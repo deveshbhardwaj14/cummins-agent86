@@ -268,8 +268,24 @@ class TranscriptSink:
             target = self._find_pending_turn(item_id)
             if target is not None:
                 self.turns.remove(target)
-        elif t == "response.audio_transcript.done":
-            text = (event.get("transcript") or "").strip()
+        elif t == "conversation.item.created":
+            item = event.get("item", {}) or {}
+            if item.get("type") != "message" or item.get("role") != "user":
+                return
+            text = "\n".join(
+                part.get("text", "") for part in (item.get("content") or [])
+                if part.get("type") in ("input_text", "text")
+            ).strip()
+            message_id = item.get("id")
+            if not text or (message_id and any(turn.get("messageId") == message_id for turn in self.turns)):
+                return
+            turn = {"role": "user", "text": text, "ts": _now_iso()}
+            if message_id:
+                turn["messageId"] = message_id
+            self.turns.append(turn)
+            self._emit_audit("turn.user", messageId=message_id, ts=turn["ts"])
+        elif t in ("response.audio_transcript.done", "response.text.done"):
+            text = (event.get("text" if t == "response.text.done" else "transcript") or "").strip()
             if text:
                 msg_id = event.get("item_id")
                 response_id = event.get("response_id")

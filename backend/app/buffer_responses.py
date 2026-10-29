@@ -5,6 +5,7 @@ Clips are stored as raw PCM in memory so playback has zero network latency.
 
 import os
 import random
+from xml.sax.saxutils import escape, quoteattr
 
 import httpx
 
@@ -64,6 +65,8 @@ def _synthesize_phrases(
     voice: str,
     sample_rate: int = 24000,
     bearer_token: str | None = None,
+    *,
+    personal_voice_profile_id: str = "",
 ) -> list[bytes]:
     """Call Azure TTS REST API for each phrase and return raw PCM bytes.
 
@@ -72,7 +75,7 @@ def _synthesize_phrases(
     have `Cognitive Services User` on the account. Otherwise fall back
     to the legacy `Ocp-Apim-Subscription-Key` header with `api_key`.
     """
-    tts_voice = _voicelive_voice_to_tts(voice)
+    tts_voice = "DragonLatestNeural" if personal_voice_profile_id else _voicelive_voice_to_tts(voice)
     url = f"{endpoint.rstrip('/')}/tts/cognitiveservices/v1"
     if bearer_token:
         auth_header = {"Authorization": f"Bearer {bearer_token}"}
@@ -87,9 +90,16 @@ def _synthesize_phrases(
     results: list[bytes] = []
     with httpx.Client(timeout=30) as client:
         for phrase in phrases:
+            speech = escape(phrase)
+            if personal_voice_profile_id:
+                speech = (
+                    f"<mstts:ttsembedding speakerProfileId={quoteattr(personal_voice_profile_id)}>"
+                    f"{speech}</mstts:ttsembedding>"
+                )
             ssml = (
-                "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>"
-                f"<voice name='{tts_voice}'>{phrase}</voice>"
+                "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' "
+                "xmlns:mstts='https://www.w3.org/2001/mstts' xml:lang='en-US'>"
+                f"<voice name={quoteattr(tts_voice)}>{speech}</voice>"
                 "</speak>"
             )
             resp = client.post(url, headers=headers, content=ssml)
@@ -123,13 +133,16 @@ def generate_nudges(
     voice: str,
     sample_rate: int = 24000,
     bearer_token: str | None = None,
+    *,
+    personal_voice_profile_id: str = "",
 ) -> list[bytes]:
     """Generate nudge audio clips for user silence prompts."""
-    tts_voice = _voicelive_voice_to_tts(voice)
+    tts_voice = "DragonLatestNeural" if personal_voice_profile_id else _voicelive_voice_to_tts(voice)
     print(f"Generating nudge audio (TTS voice: {tts_voice})...")
     nudges = _synthesize_phrases(
         NUDGE_PHRASES, endpoint, api_key, voice, sample_rate,
         bearer_token=bearer_token,
+        personal_voice_profile_id=personal_voice_profile_id,
     )
     print(f"Generated {len(nudges)} nudge audio clips")
     return nudges
@@ -141,13 +154,16 @@ def generate_greeting(
     voice: str,
     sample_rate: int = 24000,
     bearer_token: str | None = None,
+    *,
+    personal_voice_profile_id: str = "",
 ) -> bytes:
     """Generate greeting audio clip."""
-    tts_voice = _voicelive_voice_to_tts(voice)
+    tts_voice = "DragonLatestNeural" if personal_voice_profile_id else _voicelive_voice_to_tts(voice)
     print(f"Generating greeting audio (TTS voice: {tts_voice})...")
     pcm = _synthesize_phrases(
         [GREETING], endpoint, api_key, voice, sample_rate,
         bearer_token=bearer_token,
+        personal_voice_profile_id=personal_voice_profile_id,
     )[0]
     print("Generated greeting audio clip")
     return pcm

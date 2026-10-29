@@ -73,9 +73,14 @@ def init_voice_audio():
         for phrase, pcm in zip(FILLER_PHRASES, filler_pcm)
     ]
 
+    personal_voice_profile_id = (
+        PERSONAL_VOICE_PROFILE_ID
+        if PERSONAL_VOICE_PROFILE_ID and PERSONAL_VOICE_NAME else ""
+    )
     nudge_pcm = generate_nudges(
         VOICELIVE_ENDPOINT, VOICELIVE_API_KEY, VOICELIVE_VOICE,
         bearer_token=bearer_token,
+        personal_voice_profile_id=personal_voice_profile_id,
     )
     _nudges_payload = [
         {"phrase": phrase, "audio_b64": base64.b64encode(pcm).decode()}
@@ -85,6 +90,7 @@ def init_voice_audio():
     greeting_pcm = generate_greeting(
         VOICELIVE_ENDPOINT, VOICELIVE_API_KEY, VOICELIVE_VOICE,
         bearer_token=bearer_token,
+        personal_voice_profile_id=personal_voice_profile_id,
     )
     _greeting_payload = {
         "phrase": GREETING,

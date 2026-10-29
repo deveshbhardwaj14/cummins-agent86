@@ -54,6 +54,11 @@ resource embeddings 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
     //      managed Shared Private Link (created in ai-search.bicep)
     //      once the indexer runs with executionEnvironment=private.
     publicNetworkAccess: networkEnabled ? 'Disabled' : 'Enabled'
+    networkAcls: {
+      defaultAction: networkEnabled ? 'Deny' : 'Allow'
+      ipRules: []
+      virtualNetworkRules: []
+    }
   }
 }
 
