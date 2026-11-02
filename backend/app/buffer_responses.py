@@ -3,11 +3,16 @@ Pre-generate filler audio clips at startup using Azure TTS.
 Clips are stored as raw PCM in memory so playback has zero network latency.
 """
 
+import base64
+import json
 import os
 import random
+from time import monotonic
+from urllib.parse import urlencode
 from xml.sax.saxutils import escape, quoteattr
 
 import httpx
+from websockets.sync.client import connect as ws_connect
 
 DEFAULT_GREETING = "Hi, how can I help you today?"
 
@@ -108,21 +113,115 @@ def _synthesize_phrases(
     return results
 
 
+def _synthesize_voice_live_phrases(
+    phrases: list[str],
+    endpoint: str,
+    api_key: str,
+    personal_voice_name: str,
+    model: str,
+    api_version: str,
+    sample_rate: int,
+    bearer_token: str | None,
+) -> list[bytes]:
+    formats = {24000: "pcm16", 16000: "pcm16_16000hz", 8000: "pcm16_8000hz"}
+    if sample_rate not in formats:
+        raise ValueError(f"Unsupported personal-voice filler sample rate: {sample_rate}")
+    base = endpoint.rstrip("/").replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+    url = f"{base}/voice-live/realtime?{urlencode({'api-version': api_version, 'model': model})}"
+    headers = {"Authorization": f"Bearer {bearer_token}"} if bearer_token else {"api-key": api_key}
+    deadline = monotonic() + 60
+    results: list[bytes] = []
+    with ws_connect(url, additional_headers=headers, open_timeout=15, close_timeout=5) as upstream:
+        def receive_event() -> dict[str, object]:
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Timed out generating personal-voice filler audio")
+            event = json.loads(upstream.recv(timeout=remaining))
+            if not isinstance(event, dict):
+                raise ValueError("Voice Live returned an invalid filler event")
+            if event.get("type") == "error":
+                error = event.get("error")
+                if isinstance(error, dict):
+                    detail = f"{error.get('code', 'unknown')}: {error.get('message', 'No details returned')}"
+                else:
+                    detail = "No error details returned"
+                raise RuntimeError(f"Personal-voice filler synthesis failed: {detail}")
+            return event
+
+        upstream.send(json.dumps({
+            "type": "session.update",
+            "session": {
+                "modalities": ["text", "audio"],
+                "voice": {"type": "azure-personal", "name": personal_voice_name, "model": "DragonLatestNeural"},
+                "output_audio_format": formats[sample_rate],
+                "turn_detection": None,
+                "tools": [],
+                "tool_choice": "none",
+            },
+        }))
+        while receive_event().get("type") != "session.updated":
+            pass
+        for phrase in phrases:
+            upstream.send(json.dumps({
+                "type": "response.create",
+                "response": {
+                    "instructions": f"Say only this line, verbatim, without adding anything: {json.dumps(phrase)}",
+                    "tool_choice": "none",
+                },
+            }))
+            audio = bytearray()
+            while True:
+                event = receive_event()
+                if event.get("type") == "response.audio.delta":
+                    delta = event.get("delta")
+                    if not isinstance(delta, str):
+                        raise ValueError("Voice Live returned an invalid filler audio delta")
+                    audio.extend(base64.b64decode(delta, validate=True))
+                elif event.get("type") == "response.done":
+                    response = event.get("response")
+                    if not isinstance(response, dict):
+                        raise ValueError("Voice Live returned an invalid filler response")
+                    status = response.get("status")
+                    if status != "completed":
+                        raise RuntimeError(
+                            f"Personal-voice filler response {status}: {json.dumps(response.get('status_details'))}"
+                        )
+                    if not audio:
+                        raise RuntimeError("Voice Live returned no audio for a personal-voice filler")
+                    results.append(bytes(audio))
+                    break
+    return results
+
+
 def generate_fillers(
     endpoint: str,
     api_key: str,
     voice: str,
     sample_rate: int = 24000,
     bearer_token: str | None = None,
+    *,
+    personal_voice_name: str = "",
+    voice_live_model: str | None = None,
+    voice_live_api_version: str | None = None,
 ) -> list[bytes]:
     """Generate and cache filler audio clips."""
     global _cached_fillers
-    tts_voice = _voicelive_voice_to_tts(voice)
-    print(f"Generating filler audio (TTS voice: {tts_voice})...")
-    _cached_fillers = _synthesize_phrases(
-        FILLER_PHRASES, endpoint, api_key, voice, sample_rate,
-        bearer_token=bearer_token,
-    )
+    _cached_fillers = []
+    if personal_voice_name:
+        if not voice_live_model or not voice_live_api_version:
+            raise ValueError("Personal-voice fillers require the configured Voice Live model and API version")
+        print("Generating filler audio (personal voice via Voice Live)...")
+        _cached_fillers = _synthesize_voice_live_phrases(
+            FILLER_PHRASES, endpoint, api_key, personal_voice_name,
+            voice_live_model, voice_live_api_version, sample_rate, bearer_token,
+        )
+    else:
+        tts_voice = _voicelive_voice_to_tts(voice)
+        print(f"Generating filler audio (TTS voice: {tts_voice})...")
+        _cached_fillers = _synthesize_phrases(
+            FILLER_PHRASES, endpoint, api_key, voice, sample_rate,
+            bearer_token=bearer_token,
+        )
     print(f"Generated {len(_cached_fillers)} filler audio clips")
     return _cached_fillers
 

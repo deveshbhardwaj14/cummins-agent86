@@ -1,24 +1,24 @@
 import { createLightTheme, type BrandVariants, type Theme } from "@fluentui/react-components";
 
-const agentJBrand: BrandVariants = {
-  10: "#210203",
-  20: "#390608",
-  30: "#570A0E",
-  40: "#700D13",
-  50: "#8B1018",
-  60: "#A5121D",
-  70: "#BA1420",
-  80: "#CE1628",
-  90: "#DC3847",
-  100: "#E65D69",
-  110: "#ED7E88",
-  120: "#F39DA5",
-  130: "#F8B8BE",
-  140: "#FBD0D4",
-  150: "#FDE5E7",
-  160: "#FFF3F4",
+const johnDeereBrand: BrandVariants = {
+  10: "#071A03",
+  20: "#102C08",
+  30: "#193F0D",
+  40: "#204C16",
+  50: "#24571C",
+  60: "#286221",
+  70: "#306F26",
+  80: "#367C2B",
+  90: "#4D913D",
+  100: "#68A356",
+  110: "#83B570",
+  120: "#9EC68C",
+  130: "#B8D7AA",
+  140: "#D0E6C6",
+  150: "#E5F1DF",
+  160: "#F4F9F1",
 };
 
-export const agentJTheme: Theme = {
-  ...createLightTheme(agentJBrand),
+export const johnDeereTheme: Theme = {
+  ...createLightTheme(johnDeereBrand),
 };

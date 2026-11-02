@@ -4,7 +4,7 @@ import { PublicClientApplication } from "@azure/msal-browser";
 import { MsalProvider } from "@azure/msal-react";
 import { FluentProvider } from "@fluentui/react-components";
 import { msalConfig } from "./config/auth";
-import { agentJTheme } from "./config/theme";
+import { johnDeereTheme } from "./config/theme";
 import "@fontsource/inter/400.css";
 import "@fontsource/inter/500.css";
 import "@fontsource/inter/600.css";
@@ -20,7 +20,7 @@ const msalInstance = new PublicClientApplication(msalConfig);
 function renderApp() {
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
-      <FluentProvider theme={agentJTheme}>
+      <FluentProvider theme={johnDeereTheme}>
         <MsalProvider instance={msalInstance}>
           <App />
         </MsalProvider>

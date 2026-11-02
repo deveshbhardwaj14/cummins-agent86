@@ -110,7 +110,14 @@ frontend. This catches the kind of crash that otherwise only shows up
 The welcome and idle-nudge clips are generated at backend startup using Azure TTS.
 When both personal-voice settings are configured, they use the Speaker Profile ID
 with the `DragonLatestNeural` base model; otherwise they use the standard voice.
-The search filler clips continue to use the standard Azure TTS voice.
+When personal voice is fully configured, search fillers are generated and cached
+at startup through a separate Voice Live session, using the configured personal
+voice, model, and API version. This avoids the separate TTS endpoint and does not
+change the active conversation or Search request flow. Without personal voice,
+fillers continue to use standard Azure TTS.
+Personal filler generation has a 60-second total deadline. Errors are logged
+without silently substituting standard-voice audio. Restart the backend after
+changing voice settings, then refresh the browser to replace prefetched clips.
 Personal-voice synthesis errors are reported rather than silently retried with a
 standard voice.
 If cached nudge audio is unavailable, the client generates a short check-in
@@ -173,6 +180,19 @@ After updating the templates, retry `.\deploy.ps1` on Windows
 (or `./deploy` on bash). Do not use `--skip-infra`, since the account
 definition needs to be redeployed. Deleting the resource group is not required
 for this error.
+
+**`RequestDisallowedByPolicy: Storage account public access should be disallowed`**
+
+The storage account must explicitly set `allowBlobPublicAccess: false`. A private
+container (`publicAccess: 'None'`) alone does not satisfy this account-level
+policy. The RAG storage template now disables anonymous blob access in every
+deployment mode and both infrastructure passes.
+
+This setting is separate from `publicNetworkAccess`; it does not change the
+existing firewall, private endpoints, or managed-identity access. No policy
+exemption is needed for this fix. Apply the updated template in the customer
+checkout, then retry `.\deploy.ps1` without `--skip-infra`. Deleting the resource
+group is not required.
 
 **`AZURE_VOICELIVE_API_KEY env var is not set`**
 Set it (see "Setting the API key" above). The script never reads or writes it from disk.

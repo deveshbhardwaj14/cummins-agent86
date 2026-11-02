@@ -25,7 +25,7 @@ async def lifespan(app: FastAPI):
     try:
         init_voice_audio()
     except Exception:
-        logger.exception("Voice audio pre-generation failed; continuing startup without cached audio")
+        logger.exception("Voice audio pre-generation failed; some cached audio may be unavailable")
     try:
         yield
     finally:

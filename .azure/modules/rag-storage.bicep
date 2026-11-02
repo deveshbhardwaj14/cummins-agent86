@@ -60,6 +60,7 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
     supportsHttpsTrafficOnly: true
     // Tenant policy disallows shared-key access. Indexer reads via MSI.
     allowSharedKeyAccess: false
+    allowBlobPublicAccess: false
     // lockdown (pass 2): PNA Disabled — all traffic flows through the
     // blob private endpoint. IP rules must be cleared (Azure rejects
     // combining PNA Disabled with ipRules). The AI Search indexer

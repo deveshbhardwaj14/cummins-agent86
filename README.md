@@ -30,8 +30,11 @@ Reads `settings.json`, runs the backend on `http://localhost:8000` and the front
 
 ### Conversation experience
 
-The Cummins-branded **Agent86** interface presents Cummins CIO Earl's digital
-twin. The start screen offers **Voice conversation** and **Text
+The John Deere-branded **Agent86** interface uses a green-and-yellow palette
+with the existing layout and features. The header and favicon use a placeholder
+JD monogram, not the official John Deere logo. This branch changes presentation
+only; the configured agent persona, knowledge base, personal voice, and deployment
+resources remain unchanged. The start screen offers **Voice conversation** and **Text
 conversation**, with English (United States) selected by default. Type an English
 or native language name, or a locale code, into the language picker to filter
 Azure Speech's supported transcription locales. The selection applies to model
@@ -42,8 +45,11 @@ Text mode uses the same authenticated Voice Live connection and knowledge-base
 tool, but requests text-only replies and never opens the microphone or plays
 audio. Voice mode retains the personal voice configuration, typed messages, and
 an optional transcript. When both personal-voice settings are configured, cached
-welcome and idle-nudge clips use that personal voice; search fillers retain the
-standard voice. When cached nudges are unavailable, Voice mode generates gentle
+welcome and idle-nudge clips use that personal voice. Search fillers are generated
+and cached at startup through a separate Voice Live session using the configured
+personal voice, model, and API version; they do not depend on the separate TTS
+endpoint. Without a fully configured personal voice, fillers retain standard TTS.
+When cached nudges are unavailable, Voice mode generates gentle
 check-ins through the active Voice Live session, retaining its configured voice.
 English cached welcome/filler/nudge clips are not played for non-English
 sessions; their opening and idle nudges are generated live in the selected

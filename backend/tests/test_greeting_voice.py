@@ -101,13 +101,18 @@ class GreetingVoiceTests(unittest.TestCase):
                 _fillers_payload=[], _nudges_payload=[], _greeting_payload={},
             ), patch.object(
                 buffer_responses, "generate_fillers", return_value=[],
-            ), patch.object(
+            ) as fillers, patch.object(
                 buffer_responses, "generate_nudges",
                 return_value=[b"nudge-pcm"] * len(buffer_responses.NUDGE_PHRASES),
             ) as nudges, patch.object(
                 buffer_responses, "generate_greeting", return_value=b"greeting-pcm",
             ) as greeting:
                 voice.init_voice_audio()
+                self.assertEqual(fillers.call_args.kwargs.get("personal_voice_name"), expected)
+                self.assertEqual(fillers.call_args.kwargs.get("voice_live_model"), voice.VOICELIVE_MODEL)
+                self.assertEqual(
+                    fillers.call_args.kwargs.get("voice_live_api_version"), voice.VOICELIVE_API_VERSION,
+                )
                 self.assertEqual(
                     greeting.call_args.kwargs.get("personal_voice_profile_id"), expected,
                 )

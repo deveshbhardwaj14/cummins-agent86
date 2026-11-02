@@ -4,11 +4,11 @@ import { Chat24Regular, Checkmark24Regular, Clock24Regular, Globe24Regular, Mic2
 import { filterLanguages, LANGUAGES, type ConversationLanguage } from "../config/languages";
 import { formatDuration, type InteractionMode } from "../utils/conversation";
 
-export function CumminsBrand() {
+export function JohnDeereBrand() {
   return (
-    <div className="cummins-brand">
-      <img src="/cummins-logo.png" alt="Cummins" width="48" height="48" />
-      <div><strong>{import.meta.env.VITE_APP_TITLE || "Agent86"}</strong><span>Cummins CIO Earl's digital twin</span></div>
+    <div className="john-deere-brand">
+      <img src="/john-deere-monogram.svg" alt="John Deere" width="48" height="48" />
+      <div><strong>{import.meta.env.VITE_APP_TITLE || "Agent86"}</strong><span>John Deere AI experience</span></div>
     </div>
   );
 }

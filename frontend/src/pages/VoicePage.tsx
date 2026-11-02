@@ -4,7 +4,7 @@ import { InteractionStatus } from "@azure/msal-browser";
 import { loginRequest } from "../config/auth";
 import { FeedbackButton } from "../components/FeedbackButton";
 import { AppFooter } from "../components/AppFooter";
-import { ConversationClock, ConversationSetup, CumminsBrand } from "../components/ConversationSetup";
+import { ConversationClock, ConversationSetup, JohnDeereBrand } from "../components/ConversationSetup";
 import { DEFAULT_LANGUAGE, type ConversationLanguage } from "../config/languages";
 import { buildConversationSession, buildNudgeResponse, usesCachedAudio, type InteractionMode } from "../utils/conversation";
 import { devLog } from "../utils/devLog";
@@ -1085,7 +1085,7 @@ export default function VoicePage() {
           textAlign: "center",
         }}
       >
-        <CumminsBrand />
+        <JohnDeereBrand />
         {authError ? (
           <>
             <MessageBar intent="error" style={{ maxWidth: 640 }}>
@@ -1134,7 +1134,7 @@ export default function VoicePage() {
     return (
       <>
         <header className="app-header">
-          <CumminsBrand />
+          <JohnDeereBrand />
           <div className="header-right">
             <ConversationClock />
             {/* Seismic toggle hidden for now
@@ -1243,13 +1243,13 @@ export default function VoicePage() {
         <main className="landing-page">
           <div className="landing-layout">
           <div className="landing-content">
-            <span className="landing-eyebrow"><span /> THE CUMMINS AI EXPERIENCE</span>
+            <span className="landing-eyebrow"><span /> THE JOHN DEERE AI EXPERIENCE</span>
             <Text as="h1" size={900} weight="semibold" className="landing-title">
               {import.meta.env.VITE_APP_TITLE || "Agent86"}
             </Text>
 
             <Text as="h2" size={400} weight="semibold" className="landing-section-title">
-              Cummins CIO Earl's digital twin
+              John Deere AI experience
             </Text>
 
             <Text as="p" size={400} className="landing-text">
@@ -1324,7 +1324,7 @@ export default function VoicePage() {
   return (
     <div className={`conversation-bg ${interactionMode}-mode`}>
       <header className="app-header conversation-header">
-        <CumminsBrand />
+        <JohnDeereBrand />
         <div className="header-right">
           <ConversationClock startedAt={sessionStartedAt} />
           <FeedbackButton />

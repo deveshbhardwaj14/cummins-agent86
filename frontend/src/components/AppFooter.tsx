@@ -12,7 +12,7 @@ export function AppFooter({ className = "app-footer" }: AppFooterProps) {
   return (
     <footer className={className}>
       <Link href="#">Privacy policy</Link>
-      <Text size={200}>&nbsp;| Cummins · Internal AI demonstration</Text>
+      <Text size={200}>&nbsp;| John Deere · Internal AI demonstration</Text>
     </footer>
   );
 }
